@@ -1,0 +1,240 @@
+name: BOOKA PART1 Build Verification
+
+on:
+  push:
+    branches: [ "main", "part1" ]
+  pull_request:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 소스 체크아웃
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: JDK 17 설치 (지시서 3.4 고정값)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Android SDK 설치
+        uses: android-actions/setup-android@v3
+
+      - name: 산출물 디렉터리 준비
+        run: mkdir -p artifacts/test-results artifacts/lint-results
+
+      # gradle-wrapper.jar는 이 워크플로가 만들지 않는다. bootstrap-wrapper.yml을 먼저
+      # 1회 실행해 공식 Gradle Wrapper 바이너리를 저장소에 커밋해 두어야 한다.
+      - name: gradle-wrapper.jar 존재 확인 (없으면 즉시 실패 + 안내)
+        run: |
+          if [ ! -f gradle/wrapper/gradle-wrapper.jar ]; then
+            echo "오류: gradle/wrapper/gradle-wrapper.jar 가 저장소에 없습니다." >&2
+            echo "이 워크플로는 wrapper를 대신 생성하지 않습니다." >&2
+            echo ".github/workflows/bootstrap-wrapper.yml 을 GitHub Actions 탭에서" >&2
+            echo "먼저 1회 수동 실행(workflow_dispatch)해 공식 바이너리를 커밋하세요." >&2
+            exit 1
+          fi
+          ls -l gradle/wrapper/gradle-wrapper.jar
+
+      - name: gradlew 실행 권한 확인/부여
+        run: |
+          chmod +x ./gradlew
+          ls -l gradlew
+          test -x ./gradlew
+
+      # ./gradlew --version 을 먼저 단독 실행한다. wrapper가 실제로 Gradle 배포판을
+      # 내려받아 정상 기동하는지 가장 먼저, 명확하게 확인하기 위해서다(빌드 명령보다 먼저).
+      - name: Gradle 버전 확인 (wrapper 최초 기동 겸용)
+        run: |
+          set -o pipefail
+          ./gradlew --version 2>&1 | tee artifacts/gradle-version.log
+          status=${PIPESTATUS[0]}
+          echo "종료 코드: $status" | tee -a artifacts/gradle-version.log
+          exit "$status"
+
+      # 지시서 13 공통 빌드 명령을 지시서 순서(clean → test → lint → assembleDebug) 그대로,
+      # 각각 별도 단계로 실행한다. `| tee`만 쓰면 파이프의 마지막 명령(tee)의 종료 코드로
+      # 스텝 성공 여부가 판정되어 gradlew가 실패해도 다음 단계로 조용히 넘어가는 문제가 있었다.
+      # PIPESTATUS로 gradlew 자신의 종료 코드를 직접 확인해 실패를 숨기지 않는다.
+      - name: ./gradlew clean
+        run: |
+          set -o pipefail
+          ./gradlew clean 2>&1 | tee artifacts/clean.log
+          status=${PIPESTATUS[0]}
+          grep -q "BUILD SUCCESSFUL" artifacts/clean.log && echo "clean: BUILD SUCCESSFUL" >> artifacts/SUMMARY.txt || echo "clean: BUILD FAILED (종료 코드 $status)" >> artifacts/SUMMARY.txt
+          exit "$status"
+
+      - name: ./gradlew test
+        run: |
+          set -o pipefail
+          ./gradlew test 2>&1 | tee artifacts/test.log
+          status=${PIPESTATUS[0]}
+          grep -q "BUILD SUCCESSFUL" artifacts/test.log && echo "test: BUILD SUCCESSFUL" >> artifacts/SUMMARY.txt || echo "test: BUILD FAILED (종료 코드 $status)" >> artifacts/SUMMARY.txt
+          exit "$status"
+
+      - name: ./gradlew lint
+        run: |
+          set -o pipefail
+          ./gradlew lint 2>&1 | tee artifacts/lint.log
+          status=${PIPESTATUS[0]}
+          grep -q "BUILD SUCCESSFUL" artifacts/lint.log && echo "lint: BUILD SUCCESSFUL" >> artifacts/SUMMARY.txt || echo "lint: BUILD FAILED (종료 코드 $status)" >> artifacts/SUMMARY.txt
+          exit "$status"
+
+      - name: ./gradlew assembleDebug
+        run: |
+          set -o pipefail
+          ./gradlew assembleDebug 2>&1 | tee artifacts/assembleDebug.log
+          status=${PIPESTATUS[0]}
+          grep -q "BUILD SUCCESSFUL" artifacts/assembleDebug.log && echo "assembleDebug: BUILD SUCCESSFUL" >> artifacts/SUMMARY.txt || echo "assembleDebug: BUILD FAILED (종료 코드 $status)" >> artifacts/SUMMARY.txt
+          exit "$status"
+
+      - name: 환경 정보 기록
+        if: always()
+        run: |
+          {
+            echo "실행 명령: ./gradlew clean / test / lint / assembleDebug"
+            echo "실행 시각(UTC): $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+            echo "Runner OS: $(uname -a)"
+            echo "--- java -version ---"
+            java -version
+            echo "--- gradle-version.log 존재 여부 ---"
+            ls -l artifacts/gradle-version.log 2>&1 || echo "없음"
+          } | tee artifacts/environment.log
+
+      - name: APK를 BOOKA_PART1-debug.apk로 복사
+        if: always()
+        run: |
+          SRC="app/build/outputs/apk/debug/app-debug.apk"
+          if [ ! -f "$SRC" ]; then
+            echo "경고: $SRC 를 찾을 수 없습니다 (이전 단계가 실패했다면 정상적으로 없을 수 있음)." | tee artifacts/apk-copy-notice.txt
+            find . -name "*.apk" -path "*/outputs/apk/*" | tee -a artifacts/apk-copy-notice.txt || true
+          else
+            cp "$SRC" artifacts/BOOKA_PART1-debug.apk
+            echo "APK 크기: $(stat -c%s artifacts/BOOKA_PART1-debug.apk) bytes" | tee artifacts/apk-copy-notice.txt
+          fi
+
+      - name: test 결과 수집
+        if: always()
+        run: |
+          find . -type d -path "*/build/test-results/*" -not -path "./artifacts/*" -exec cp -r --parents {} artifacts/test-results/ \; 2>/dev/null || true
+          find . -type d -path "*/build/reports/tests/*" -not -path "./artifacts/*" -exec cp -r --parents {} artifacts/test-results/ \; 2>/dev/null || true
+          echo "수집된 test 결과 파일 수: $(find artifacts/test-results -type f | wc -l)" | tee -a artifacts/SUMMARY.txt
+
+      - name: lint 결과 수집
+        if: always()
+        run: |
+          find . -type f \( -name "lint-results*.html" -o -name "lint-results*.xml" -o -name "lint-results*.sarif" \) -not -path "./artifacts/*" -exec cp --parents {} artifacts/lint-results/ \; 2>/dev/null || true
+          echo "수집된 lint 결과 파일 수: $(find artifacts/lint-results -type f | wc -l)" | tee -a artifacts/SUMMARY.txt
+
+      # zip -r . 로 저장소 전체를 훑으면 방금 만들고 있는 zip 자신을 다시 포함하는 등
+      # 문제가 생기기 쉬워, git에 커밋된 파일만 정확히 담는 git archive로 바꿨다.
+      - name: 최종 소스 ZIP 생성 (BOOKA_Android_PART1.zip, git archive 사용)
+        if: always()
+        run: git archive --format=zip --output=artifacts/BOOKA_Android_PART1.zip HEAD
+
+      - name: SHA-256 계산 (APK + 최종 ZIP, 존재하는 파일만)
+        if: always()
+        run: |
+          {
+            echo "# BOOKA_PART1_SHA256SUMS.txt"
+            echo "# GitHub Actions run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            if [ -f artifacts/BOOKA_PART1-debug.apk ]; then
+              ( cd artifacts && sha256sum BOOKA_PART1-debug.apk )
+            else
+              echo "# BOOKA_PART1-debug.apk 없음 (이 실행에서 assembleDebug가 성공하지 못함)"
+            fi
+            if [ -f artifacts/BOOKA_Android_PART1.zip ]; then
+              ( cd artifacts && sha256sum BOOKA_Android_PART1.zip )
+            fi
+          } | tee artifacts/BOOKA_PART1_SHA256SUMS.txt
+
+      # 이미 GitHub Actions Artifact 자체가 다운로드 시 zip으로 한 번 감싸지므로,
+      # 여기서 로그를 미리 zip으로 묶어 올리면 "zip 안에 같은 이름의 zip"이 중복 생긴다.
+      # 그래서 로그 파일들은 압축하지 않고 원본 그대로 업로드한다.
+      - name: Artifact 업로드 - 빌드 로그 원본(clean/test/lint/assembleDebug/gradle-version/environment/SUMMARY)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1_build_logs
+          path: |
+            artifacts/clean.log
+            artifacts/test.log
+            artifacts/lint.log
+            artifacts/assembleDebug.log
+            artifacts/gradle-version.log
+            artifacts/environment.log
+            artifacts/SUMMARY.txt
+            artifacts/apk-copy-notice.txt
+          if-no-files-found: warn
+
+      - name: Artifact 업로드 - APK
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1-debug-apk
+          path: artifacts/BOOKA_PART1-debug.apk
+          if-no-files-found: warn
+
+      - name: Artifact 업로드 - test 결과
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1_test_results
+          path: artifacts/test-results
+          if-no-files-found: warn
+
+      - name: Artifact 업로드 - lint 결과
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1_lint_results
+          path: artifacts/lint-results
+          if-no-files-found: warn
+
+      - name: Artifact 업로드 - SHA256SUMS
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1_SHA256SUMS
+          path: artifacts/BOOKA_PART1_SHA256SUMS.txt
+          if-no-files-found: warn
+
+      - name: Artifact 업로드 - 최종 소스 ZIP
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_Android_PART1_source
+          path: artifacts/BOOKA_Android_PART1.zip
+          if-no-files-found: warn
+
+  # 위 build 잡이 끝난 뒤, 이 실행(run) 전체의 원본 콘솔 로그를 그대로 받아 업로드한다.
+  # gh CLI(GitHub 호스트 러너에 기본 설치됨)로 이 실행 자신의 로그를 조회한다.
+  collect-full-run-log:
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    steps:
+      - name: 이 실행의 전체 GitHub Actions 로그 다운로드
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh run view "${{ github.run_id }}" --repo "${{ github.repository }}" --log \
+            > BOOKA_PART1_full_actions_log.txt || \
+            echo "전체 로그 조회 실패 (권한 또는 API 제한 가능성)" > BOOKA_PART1_full_actions_log.txt
+
+      - name: Artifact 업로드 - 전체 GitHub Actions 실행 로그
+        uses: actions/upload-artifact@v4
+        with:
+          name: BOOKA_PART1_full_actions_log
+          path: BOOKA_PART1_full_actions_log.txt
+          if-no-files-found: warn

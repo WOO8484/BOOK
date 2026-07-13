@@ -1,0 +1,6 @@
+실제 GitHub Actions 경로:
+.github/workflows/bootstrap-wrapper.yml
+.github/workflows/booka-part1-build.yml
+
+iPhone에서 압축 해제할 때 .github 폴더가 숨겨질 수 있어 이 폴더에 같은 파일을 백업했습니다.
+GitHub 저장소에는 반드시 위 실제 경로로 올려야 합니다.

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose에서 MaterialTheme으로 실제 색상을 제어하므로, 여기서는 시스템 윈도우 테마만 최소 정의한다. -->
+    <style name="Theme.Booka" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>
