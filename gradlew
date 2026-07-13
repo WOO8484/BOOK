@@ -31,7 +31,7 @@ done
 APP_HOME=$(cd "$(dirname "$PRG")" >/dev/null && pwd -P) || exit 1
 
 APP_NAME="Gradle"
-DEFAULT_JVM_OPTS='"-Xmx64m" "-Xms64m"'
+DEFAULT_JVM_OPTS="-Xmx64m -Xms64m"
 
 MAX_FD="maximum"
 
