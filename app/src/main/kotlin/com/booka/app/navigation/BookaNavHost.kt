@@ -5,7 +5,7 @@ import androidx.compose.ui.Modifier
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import com.booka.core.navigation.BookaDestination
-import com.booka.feature.import.importGraph
+import com.booka.feature.importer.importGraph
 import com.booka.feature.library.libraryGraph
 import com.booka.feature.metadata.metadataGraph
 import com.booka.feature.reader.comic.comicReaderGraph

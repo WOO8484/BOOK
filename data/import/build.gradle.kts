@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "com.booka.data.import"
+    namespace = "com.booka.data.importer"
     compileSdk = 37
     defaultConfig { minSdk = 26 }
     compileOptions {

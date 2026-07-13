@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.booka.feature.import"
+    namespace = "com.booka.feature.importer"
     compileSdk = 37
     defaultConfig { minSdk = 26 }
     buildFeatures { compose = true }
